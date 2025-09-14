@@ -112,6 +112,7 @@ library DataStructures {
         bool isActive; //Check if the product is active in the supply chain
         uint32 carbonFootprint; //Carbon footprint in grams CO2e per kg of product
         // IPFS References for additional data
+        string batchNumber;
         string metadataIPFS; //IPFS hash or URL for additional metadata
         string[] imagesIPFS; //IPFS hash or URL for product images
     }
@@ -120,6 +121,7 @@ library DataStructures {
         uint256 productID; //ID of the product batch
         address from; //Sender address
         address to; //Receiver address
+        uint256 price;
         uint128 quantity; //Quantity transferred
         ProductStage stage; //State at the time of transaction
         uint64 timestamp; //Time of transaction
@@ -258,7 +260,7 @@ library DataStructures {
         uint128 plantedDate;
         uint128 harvestDate;
         uint128 expiryDate;
-        CertificationType[] certifications;
+        CertificationType[] certificationType;
         string description;
         uint128 farmGatePrice;
         FarmingPractices practices;

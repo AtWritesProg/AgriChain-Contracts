@@ -7,7 +7,7 @@ import {IAgriChainEvents} from "./IAgriChainEvents.sol";
 import {AccessControl} from "@openzeppelin/contracts/access/AccessControl.sol";
 import {Pausable} from "@openzeppelin/contracts/utils/Pausable.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {Stakeholder} from "./Stakeholder.sol";
+import {StakeholderManager} from "./StakeholderManager.sol";
 
 /**
  * @title AgriChain Main Supply Chain Tracking Contract
