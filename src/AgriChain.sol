@@ -15,6 +15,4 @@ import {Stakeholder} from "./Stakeholder.sol";
  * Inherits from OpenZeppelin's AccessControl, Pausable, and ReentrancyGuard for robust access management and security.
  * Central Contract for managing agricultural product lifecycle from farm to consumer and IPFS integration.
  */
-contract AgriChain is Pausable, IAgriChainEvents, AccessControl, ReentrancyGuard {
-
-}
+contract AgriChain is Pausable, IAgriChainEvents, AccessControl, ReentrancyGuard {}

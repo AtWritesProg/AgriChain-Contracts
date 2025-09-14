@@ -11,15 +11,13 @@ import {DataStructures} from "./DataStructures.sol";
  * @title Stakeholder Contract
  * @dev Manages stakeholder roles and permissions within the AgriChain System. with IPFS integration for storing stakeholder details.
  */
-
-contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
-
+contract StakeholderManager is AccessControl, Pausable, IAgriChainEvents {
     //Role Definitions
-    bytes32 public constant ADMIN_ROLE = 0x0000000000000000000000000000000000000000000000000000000000000000;
-    bytes32 public constant FARMER_ROLE = 0x7c6181838a71a779e445600d4c6ecbe16bacf2b3c5bda69c29fada66d1b645d1;
-    bytes32 public constant DISTRIBUTOR_ROLE =0xfbd454f36a7e1a388bd6fc3ab10d434aa4578f811acbbcf33afb1c697486313c;
-    bytes32 public constant RETAILER_ROLE = 0x2a5f906c256a5d799494fcd066e1f6c077689de1cdb65052a1624de4bace99bf;
-    bytes32 public constant INSPECTOR_ROLE =0x273dcf2136c7d8ef632bb8ef13dbca69a8f36fa620c7468671b3153d46a211c0;
+    bytes32 constant ADMIN_ROLE = 0x0000000000000000000000000000000000000000000000000000000000000000;
+    bytes32 constant FARMER_ROLE = 0x9decc540ed7e12dc756a0a33fd30896853d6f3395609286d2d83d03db68fbac9;
+    bytes32 constant DISTRIBUTOR_ROLE = 0x7722e3dbdf7a5417dd23d582ff681776bb661e10ab9355388e1d977817a7a1b5;
+    bytes32 constant RETAILER_ROLE = 0xc3ca1c550e48f508639854b12b070ee6611457a1fe9df69a92864114bfc0e5cf;
+    bytes32 constant INSPECTOR_ROLE = 0x52d54c20deb3c9c90c1e2b1d66f2c5b1c2c839c7563acb76f7b6cc33fcfea88d;
 
     struct SystemConfig {
         uint64 farmerRegistrationFee;
@@ -29,6 +27,7 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
         uint8 minReputationForTransaction;
         uint8 minReputationForVerification;
     }
+
     SystemConfig public systemConfig;
 
     //Stakeholder Mappings
@@ -50,9 +49,10 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
         address verifiedBy;
         uint8 reputationScore;
     }
+
     mapping(address => VerificationData) public stakeholderData;
 
-    //Reputation History for IPFS 
+    //Reputation History for IPFS
     mapping(address => string) public reputationHistoryIPFS;
 
     //Custom Errors
@@ -65,28 +65,13 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
     error InvalidReputationScore();
 
     //Events for Optimizations
-    event StakeholderRegistered(
-        address indexed stakeholder,
-        string stakeholderType,
-        string name,
-        uint64 timestamp
-    );
+    event StakeholderRegistered(address indexed stakeholder, string stakeholderType, string name, uint64 timestamp);
 
     event VerificationStatusChanged(
-        address indexed stakeholder,
-        bool verified,
-        address indexed verifier,
-        uint64 timestamp
+        address indexed stakeholder, bool verified, address indexed verifier, uint64 timestamp
     );
 
-    event ReputationScoreUpdated(
-        address indexed stakeholder,
-        uint8 oldScore,
-        uint8 newScore,
-        string ipfsReason
-    );
-
-
+    event ReputationScoreUpdated(address indexed stakeholder, uint8 oldScore, uint8 newScore, string ipfsReason);
 
     //Constructor
     constructor() {
@@ -106,7 +91,7 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
 
     //===================Optimized Modifier======================
     modifier onlyUnregistered(address _address) {
-        if(_isRegistered(_address)) {
+        if (_isRegistered(_address)) {
             revert AlreadyRegistered();
         }
         _;
@@ -117,8 +102,8 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
         _;
     }
 
-    modifier meetsRegistrationFee(uint64 _reqFee){
-        if(msg.value < _reqFee){
+    modifier meetsRegistrationFee(uint64 _reqFee) {
+        if (msg.value < _reqFee) {
             revert InsufficientFunds();
         }
         _;
@@ -126,17 +111,18 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
 
     //===================Farmer Management======================
 
-    function registerFarmer(DataStructures.FarmerRegistration memory _data
-    ) external payable 
-    whenNotPaused
-    onlyUnregistered(msg.sender)
-    meetsRegistrationFee(systemConfig.farmerRegistrationFee) {
-
-        if (bytes(_data.name).length == 0 || bytes(_data.farmName).length == 0){
+    function registerFarmer(DataStructures.FarmerRegistration memory _data)
+        external
+        payable
+        whenNotPaused
+        onlyUnregistered(msg.sender)
+        meetsRegistrationFee(systemConfig.farmerRegistrationFee)
+    {
+        if (bytes(_data.name).length == 0 || bytes(_data.farmName).length == 0) {
             revert InvalidDataInput();
         }
 
-        //Farmer struct 
+        //Farmer struct
         DataStructures.Farmer storage farmer = farmers[msg.sender];
         farmer.wallet = msg.sender;
         farmer.name = _data.name;
@@ -151,31 +137,31 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
 
         //Additonal Farm
         uint256 farmsLength = _data.additionalFarms.length;
-        for (uint256 i = 0; i < farmsLength;){
+        for (uint256 i = 0; i < farmsLength;) {
             farmer.additionalFarms.push(_data.additionalFarms[i]);
-            unchecked {++i;}
+            unchecked {
+                ++i;
+            }
         }
 
         //Add certifications
         uint256 certificationsLength = _data.certifications.length;
         for (uint256 i = 0; i < certificationsLength;) {
             farmer.certifications.push(_data.certifications[i]);
-            unchecked { ++i;}
+            unchecked {
+                ++i;
+            }
         }
 
-        //Update tracking data 
+        //Update tracking data
         allFarmers.push(msg.sender);
-        stakeholderData[msg.sender] = VerificationData({
-            isVerified: false,
-            verificationDate: 0,
-            verifiedBy: address(0),
-            reputationScore: 50
-        });
+        stakeholderData[msg.sender] =
+            VerificationData({isVerified: false, verificationDate: 0, verifiedBy: address(0), reputationScore: 50});
 
         _grantRole(FARMER_ROLE, msg.sender);
 
-        emit StakeholderRegistered(msg.sender, "farmer", _data.name , uint64(block.timestamp));
-        emit FarmerRegistered(msg.sender , _data.name, _data.farmName, _data.farmLocation.name);
+        emit StakeholderRegistered(msg.sender, "farmer", _data.name, uint64(block.timestamp));
+        emit FarmerRegistered(msg.sender, _data.name, _data.farmName, _data.farmLocation.name);
 
         // Refund excess Payment
         if (msg.value > systemConfig.farmerRegistrationFee) {
@@ -185,65 +171,68 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
 
     //=================Distributor Management==================
 
-    function registerDistributor(DataStructures.DistributorRegistration memory _data
-    ) external payable
+    function registerDistributor(DataStructures.DistributorRegistration memory _data)
+        external
+        payable
         whenNotPaused
         onlyUnregistered(msg.sender)
-        meetsRegistrationFee(systemConfig.farmerRegistrationFee){
-            
-            if(bytes(_data.name).length == 0 || bytes(_data.companyName).length == 0) {
-                revert InvalidDataInput();
-            }
+        meetsRegistrationFee(systemConfig.farmerRegistrationFee)
+    {
+        if (bytes(_data.name).length == 0 || bytes(_data.companyName).length == 0) {
+            revert InvalidDataInput();
+        }
 
-            DataStructures.Distributor storage distributor = distributors[msg.sender];
-            distributor.wallet = msg.sender;
-            distributor.name = _data.name;
-            distributor.companyName = _data.companyName;
-            distributor.licenseNumber = _data.licenseNumber;
-            distributor.registrationDate = uint64(block.timestamp);
-            distributor.reputationScore = 50;
-            distributor.isVerified = false;
-            distributor.email = _data.email;
-            distributor.phoneNumber = _data.phoneNumber;
-            distributor.storageCapacity = uint32(_data.storageCapacity);
+        DataStructures.Distributor storage distributor = distributors[msg.sender];
+        distributor.wallet = msg.sender;
+        distributor.name = _data.name;
+        distributor.companyName = _data.companyName;
+        distributor.licenseNumber = _data.licenseNumber;
+        distributor.registrationDate = uint64(block.timestamp);
+        distributor.reputationScore = 50;
+        distributor.isVerified = false;
+        distributor.email = _data.email;
+        distributor.phoneNumber = _data.phoneNumber;
+        distributor.storageCapacity = uint32(_data.storageCapacity);
 
-            //Add warehouses
-            uint256 warehouseLength = _data.warehouses.length;
-            for (uint256 i = 0; i < warehouseLength;){
-                distributor.warehouses.push(_data.warehouses[i]);
-            }
+        //Add warehouses
+        uint256 warehouseLength = _data.warehouses.length;
+        for (uint256 i = 0; i < warehouseLength;) {
+            distributor.warehouses.push(_data.warehouses[i]);
+        }
 
-            //Add Specializations
-            uint256 specializationLength = _data.specializations.length;
-            for (uint256 i = 0; i < specializationLength;) {
-                distributor.specializations.push(_data.specializations[i]);
-            }
+        //Add Specializations
+        uint256 specializationLength = _data.specializations.length;
+        for (uint256 i = 0; i < specializationLength;) {
+            distributor.specializations.push(_data.specializations[i]);
+        }
 
-            allDistributors.push(msg.sender);
-            stakeholderData[msg.sender] = VerificationData({
-                isVerified: false,
-                verificationDate: uint64(block.timestamp),
-                verifiedBy: address(0),
-                reputationScore: 50
-            });
+        allDistributors.push(msg.sender);
+        stakeholderData[msg.sender] = VerificationData({
+            isVerified: false,
+            verificationDate: uint64(block.timestamp),
+            verifiedBy: address(0),
+            reputationScore: 50
+        });
 
-            _grantRole(DISTRIBUTOR_ROLE, msg.sender); 
+        _grantRole(DISTRIBUTOR_ROLE, msg.sender);
 
-            emit StakeholderRegistered(msg.sender, "distributor", _data.name, uint64(block.timestamp));
-            emit DistributorRegistered(msg.sender, _data.name, _data.companyName, warehouseLength);
+        emit StakeholderRegistered(msg.sender, "distributor", _data.name, uint64(block.timestamp));
+        emit DistributorRegistered(msg.sender, _data.name, _data.companyName, warehouseLength);
 
-            if(msg.value > systemConfig.distributorRegistrationFee) {
-                payable(msg.sender).transfer(msg.value - systemConfig.distributorRegistrationFee);
-            }
+        if (msg.value > systemConfig.distributorRegistrationFee) {
+            payable(msg.sender).transfer(msg.value - systemConfig.distributorRegistrationFee);
+        }
     }
 
     //===============Retailer Management====================
 
-    function registerRetailer(DataStructures.RetailerRegistration memory _data
-    ) external payable
-    whenNotPaused
-    onlyUnregistered(msg.sender)
-    meetsRegistrationFee(systemConfig.retailerRegistrationFee) {
+    function registerRetailer(DataStructures.RetailerRegistration memory _data)
+        external
+        payable
+        whenNotPaused
+        onlyUnregistered(msg.sender)
+        meetsRegistrationFee(systemConfig.retailerRegistrationFee)
+    {
         if (bytes(_data.name).length == 0 || bytes(_data.storeName).length == 0) {
             revert InvalidDataInput();
         }
@@ -261,7 +250,7 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
         retailer.email = _data.email;
         retailer.phoneNumber = _data.phoneNumber;
         retailer.storeType = _data.storeType;
-        
+
         //Add authorized certification efficiently
         uint256 storesLength = _data.additionalStores.length;
         for (uint256 i = 0; i < storesLength;) {
@@ -269,12 +258,8 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
         }
 
         allRetailers.push(msg.sender);
-        stakeholderData[msg.sender] = VerificationData({
-            isVerified: false,
-            verificationDate: 0,
-            verifiedBy: address(0),
-            reputationScore: 50
-        });
+        stakeholderData[msg.sender] =
+            VerificationData({isVerified: false, verificationDate: 0, verifiedBy: address(0), reputationScore: 50});
 
         _grantRole(RETAILER_ROLE, msg.sender);
 
@@ -295,53 +280,51 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
         DataStructures.CertificationType[] memory _authorizedFor,
         string memory _email,
         string memory _phoneNumber
-    ) external payable
+    )
+        external
+        payable
         whenNotPaused
         onlyUnregistered(msg.sender)
-        meetsRegistrationFee(systemConfig.inspectorRegistrationFee) {
+        meetsRegistrationFee(systemConfig.inspectorRegistrationFee)
+    {
+        if (bytes(_name).length == 0 || bytes(_organization).length == 0) {
+            revert InvalidDataInput();
+        }
 
-            if (bytes(_name).length == 0 || bytes(_organization).length == 0) {
-                revert InvalidDataInput();
-            }
+        DataStructures.Inspector storage inspector = inspectors[msg.sender];
+        inspector.wallet = msg.sender;
+        inspector.name = _name;
+        inspector.organization = _organization;
+        inspector.licenseNumber = _licenseNumber;
+        inspector.registrationDate = uint64(block.timestamp);
+        inspector.isActive = false; //Require admin approval
+        inspector.email = _email;
+        inspector.phoneNumber = _phoneNumber;
 
-            DataStructures.Inspector storage inspector = inspectors[msg.sender];
-            inspector.wallet = msg.sender;
-            inspector.name = _name;
-            inspector.organization = _organization;
-            inspector.licenseNumber = _licenseNumber;
-            inspector.registrationDate = uint64(block.timestamp);
-            inspector.isActive = false; //Require admin approval 
-            inspector.email = _email;
-            inspector.phoneNumber = _phoneNumber;
+        // Add authorized certifications efficiently
+        uint256 authLength = _authorizedFor.length;
+        for (uint256 i = 0; i < authLength;) {
+            inspector.authorizedFor.push(_authorizedFor[i]);
+        }
 
-            // Add authorized certifications efficiently 
-            uint256 authLength = _authorizedFor.length;
-            for (uint256 i = 0; i < authLength;) {
-                inspector.authorizedFor.push(_authorizedFor[i]);
-            }
+        allInspectors.push(msg.sender);
+        stakeholderData[msg.sender] =
+            VerificationData({isVerified: false, verificationDate: 0, verifiedBy: address(0), reputationScore: 50});
 
-            allInspectors.push(msg.sender);
-            stakeholderData[msg.sender] = VerificationData({
-                isVerified: false,
-                verificationDate: 0,
-                verifiedBy: address(0),
-                reputationScore: 50
-            });
+        emit StakeholderRegistered(msg.sender, "inspector", _name, uint64(block.timestamp));
+        emit InspectorRegistered(msg.sender, _name, _organization, _licenseNumber);
 
-            emit StakeholderRegistered(msg.sender, "inspector", _name, uint64(block.timestamp));
-            emit InspectorRegistered(msg.sender, _name, _organization, _licenseNumber);
-
-            if (msg.value > systemConfig.inspectorRegistrationFee) {
-                payable(msg.sender).transfer(msg.value - systemConfig.inspectorRegistrationFee);
-            }
+        if (msg.value > systemConfig.inspectorRegistrationFee) {
+            payable(msg.sender).transfer(msg.value - systemConfig.inspectorRegistrationFee);
+        }
     }
     //================ Verification System =================
 
-    function verifyStakeholder(
-        address _stakeholder,
-        string memory _stakeholderType
-    ) external onlyRole(ADMIN_ROLE) onlyRegistered(_stakeholder) {
-
+    function verifyStakeholder(address _stakeholder, string memory _stakeholderType)
+        external
+        onlyRole(ADMIN_ROLE)
+        onlyRegistered(_stakeholder)
+    {
         VerificationData storage data = stakeholderData[_stakeholder];
         if (data.isVerified) revert AlreadyVerified();
 
@@ -356,7 +339,7 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
         } else if (typeHash == keccak256(abi.encodePacked("distributor"))) {
             distributors[_stakeholder].isVerified = true;
         } else if (typeHash == keccak256(abi.encodePacked("retailer"))) {
-            retailers[_stakeholder].isVerified= true;
+            retailers[_stakeholder].isVerified = true;
         } else if (typeHash == keccak256(abi.encodePacked("inspector"))) {
             inspectors[_stakeholder].isActive = true;
             _grantRole(INSPECTOR_ROLE, _stakeholder);
@@ -366,13 +349,9 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
         emit StakeholderVerified(_stakeholder, _stakeholderType, msg.sender, block.timestamp);
     }
 
-    function revokeVerification(
-        address _stakeholder,
-        string memory _reasonIPFS
-    ) external onlyRole(ADMIN_ROLE) {
-
+    function revokeVerification(address _stakeholder, string memory _reasonIPFS) external onlyRole(ADMIN_ROLE) {
         VerificationData storage data = stakeholderData[_stakeholder];
-        if(!data.isVerified) revert NotVerified();
+        if (!data.isVerified) revert NotVerified();
 
         data.isVerified = false;
 
@@ -392,13 +371,12 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
 
     //===============Reputation System======================
 
-    function updateReputation(
-        address _stakeholder,
-        uint8 _newScore,
-        string memory _reasonIPFS
-    ) external onlyRole(ADMIN_ROLE) onlyRegistered(_stakeholder) {
-        
-        if(_newScore > 100) revert InvalidReputationScore();
+    function updateReputation(address _stakeholder, uint8 _newScore, string memory _reasonIPFS)
+        external
+        onlyRole(ADMIN_ROLE)
+        onlyRegistered(_stakeholder)
+    {
+        if (_newScore > 100) revert InvalidReputationScore();
 
         VerificationData storage data = stakeholderData[_stakeholder];
         uint8 oldScore = data.reputationScore;
@@ -420,11 +398,10 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
         emit ReputationUpdated(_stakeholder, oldScore, _newScore, "", msg.sender);
     }
 
-    function batchUpdateReputation(
-        address[] memory _stakeholders,
-        uint8[] memory _newScores,
-        string memory _reasonIPFS
-    ) external onlyRole(ADMIN_ROLE) {
+    function batchUpdateReputation(address[] memory _stakeholders, uint8[] memory _newScores, string memory _reasonIPFS)
+        external
+        onlyRole(ADMIN_ROLE)
+    {
         require(_stakeholders.length == _newScores.length, "Array length mismatch");
         require(_stakeholders.length <= 50, "Too many stakeholders for batch operations");
 
@@ -437,13 +414,15 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
                 emit ReputationScoreUpdated(_stakeholders[i], oldScore, _newScores[i], _reasonIPFS);
             }
 
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 
     //===============Query Functions=======================
 
-    function getStakeholderType(address _stakeholder ) external view returns (string memory) {
+    function getStakeholderType(address _stakeholder) external view returns (string memory) {
         if (farmers[_stakeholder].wallet != address(0)) {
             return "farmer";
         } else if (distributors[_stakeholder].wallet != address(0)) {
@@ -470,7 +449,8 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
     }
 
     function canPerformVerification(address _stakeholder) external view returns (bool) {
-        return inspectors[_stakeholder].isActive && stakeholderData[_stakeholder].reputationScore >= systemConfig.minReputationForVerification;
+        return inspectors[_stakeholder].isActive
+            && stakeholderData[_stakeholder].reputationScore >= systemConfig.minReputationForVerification;
     }
 
     function getFarmerProducts(address _farmer) external view returns (uint256[] memory) {
@@ -489,14 +469,18 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
         return inspectors[_inspector].inspectedProducts;
     }
 
-    function getInspectorAuthorizations(address _inspector) external view returns (DataStructures.CertificationType[] memory) {
+    function getInspectorAuthorizations(address _inspector)
+        external
+        view
+        returns (DataStructures.CertificationType[] memory)
+    {
         return inspectors[_inspector].authorizedFor;
     }
 
-    //=====================Statistics=========================== 
+    //=====================Statistics===========================
 
-    function getTotalStakeholders() external view returns (uint256 , uint256 , uint256 , uint256) {
-        return (allFarmers.length , allDistributors.length , allRetailers.length , allInspectors.length);
+    function getTotalStakeholders() external view returns (uint256, uint256, uint256, uint256) {
+        return (allFarmers.length, allDistributors.length, allRetailers.length, allInspectors.length);
     }
 
     function getVerifiedStakeHolders() external view returns (uint256) {
@@ -513,33 +497,42 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
             if (stakeholderData[allFarmers[i]].isVerified) {
                 verified++;
             }
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
 
         for (uint256 i = 0; i < allDistributors.length;) {
             if (stakeholderData[allDistributors[i]].isVerified) {
                 verified++;
             }
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
         for (uint256 i = 0; i < allRetailers.length;) {
             if (stakeholderData[allRetailers[i]].isVerified) {
                 verified++;
             }
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
         for (uint256 i = 0; i < allInspectors.length;) {
             if (stakeholderData[allInspectors[i]].isVerified) {
                 verified++;
             }
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
 
         return verified;
     }
 
     function getAvgerageReputation() external view returns (uint256) {
-        uint256 totalStakeholders = allFarmers.length + allDistributors.length + allRetailers.length + allInspectors.length;
+        uint256 totalStakeholders =
+            allFarmers.length + allDistributors.length + allRetailers.length + allInspectors.length;
 
         if (totalStakeholders == 0) {
             return 0;
@@ -549,45 +542,51 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
 
         for (uint256 i = 0; i < allFarmers.length;) {
             totalReputation += stakeholderData[allFarmers[i]].reputationScore;
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
 
         for (uint256 i = 0; i < allDistributors.length;) {
             totalReputation += stakeholderData[allDistributors[i]].reputationScore;
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
 
         for (uint256 i = 0; i < allRetailers.length;) {
             totalReputation += stakeholderData[allRetailers[i]].reputationScore;
-            unchecked { ++i; }
-        }
-        
-        for (uint256 i = 0; i < allInspectors.length;) {
-            totalReputation += stakeholderData[allFarmers[i]].reputationScore;
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
 
-        return totalReputation/totalStakeholders;
+        for (uint256 i = 0; i < allInspectors.length;) {
+            totalReputation += stakeholderData[allFarmers[i]].reputationScore;
+            unchecked {
+                ++i;
+            }
+        }
+
+        return totalReputation / totalStakeholders;
     }
 
     //===================Admin Functions=======================
 
-    function setRegistrationFees(
-        uint64 _farmerFee,
-        uint64 _distributorFee,
-        uint64 _retailerFee,
-        uint64 _inspectorFee
-    ) external onlyRole(ADMIN_ROLE) {
+    function setRegistrationFees(uint64 _farmerFee, uint64 _distributorFee, uint64 _retailerFee, uint64 _inspectorFee)
+        external
+        onlyRole(ADMIN_ROLE)
+    {
         systemConfig.farmerRegistrationFee = _farmerFee;
         systemConfig.distributorRegistrationFee = _distributorFee;
         systemConfig.retailerRegistrationFee = _retailerFee;
         systemConfig.inspectorRegistrationFee = _inspectorFee;
     }
 
-    function setReputationThresholds(
-        uint8 _minForTransactions,
-        uint8 _minForVerification
-    ) external onlyRole(ADMIN_ROLE) {
+    function setReputationThresholds(uint8 _minForTransactions, uint8 _minForVerification)
+        external
+        onlyRole(ADMIN_ROLE)
+    {
         systemConfig.minReputationForTransaction = _minForTransactions;
         systemConfig.minReputationForVerification = _minForVerification;
     }
@@ -625,10 +624,12 @@ contract Stakeholder is AccessControl, Pausable, IAgriChainEvents {
         inspectors[_inspector].inspectedProducts.push(_productId);
     }
 
-    function _isRegistered(address _stakeholder) internal view returns (bool){
-        return farmers[_stakeholder].wallet != address(0) ||
-               distributors[_stakeholder].wallet != address(0) ||
-               retailers[_stakeholder].wallet != address(0) ||
-               inspectors[_stakeholder].wallet != address(0);
+    function _isRegistered(address _stakeholder) internal view returns (bool) {
+        return farmers[_stakeholder].wallet != address(0) || distributors[_stakeholder].wallet != address(0)
+            || retailers[_stakeholder].wallet != address(0) || inspectors[_stakeholder].wallet != address(0);
+    }
+
+    function getFarmer(address _farmer) external view returns (DataStructures.Farmer memory) {
+        return farmers[_farmer];
     }
 }
