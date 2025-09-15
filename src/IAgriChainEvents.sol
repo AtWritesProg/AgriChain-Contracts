@@ -63,7 +63,7 @@ interface IAgriChainEvents {
      * @param inspector Address of the inspector
      * @param timestamp When the quality was updated
      */
-    event QualityRecorced(
+    event QualityRecorded(
         uint256 indexed productId,
         DataStructures.QualityGrade grade,
         uint8 score,

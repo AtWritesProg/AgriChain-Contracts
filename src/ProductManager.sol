@@ -54,6 +54,8 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
     error NotProductOwner();
     error ProductNotFound();
     error UnauthorizedStageTransition();
+    error QualityScoreTooLow();
+    error InsufficientReputation();
 
     constructor(address _stakeholderManager) {
         _grantRole(DEFAULT_ADMIN_ROLE, msg.sender);
@@ -84,6 +86,13 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
     modifier userNotBlocked() {
         if (blockedUsers[msg.sender]) {
             revert UserBlocked();
+        }
+        _;
+    }
+
+    modifier canParticipateInTransactions() {
+        if (!stakeholderManager.canParticipateInTransactions(msg.sender)) {
+            revert InsufficientReputation();
         }
         _;
     }
@@ -123,7 +132,6 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
 
         //Farmer Location
         DataStructures.Farmer memory farmer = stakeholderManager.getFarmer(msg.sender);
-        string memory farmName = farmer.farmName;
         DataStructures.Location memory farmLocation = farmer.farmLocation;
 
         //Create Product struct in Memory then copy to storage
@@ -248,7 +256,92 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
         emit ProductLocationUpdated(_productId, product.currentLocation.name, _newLocation.name, _newLocation.coordinates, msg.sender);
     }
     //======================Optimized Quality Assessment======================
+    function recordQualityAssessment(uint256 _productId, DataStructures.QualityData memory _qualityData
+    ) external
+        productExists(_productId)
+        onlyRole(INSPECTOR_ROLE)
+        productNotBlocked(_productId) {
 
+            if(_qualityData.score > 100) revert InvalidInputData();
+            if(_qualityData.parameters.length != _qualityData.parameterScores.length) revert InvalidInputData();
+            if(_qualityData.score < systemConfig.minQualityScore) revert QualityScoreTooLow();
+            if(!stakeholderManager.canPerformVerification(msg.sender)) revert StakeholderNotVerified();
+
+            //Create Quality Record
+            DataStructures.Quality memory qualityRecord = DataStructures.Quality ({
+                grade: _qualityData.grade,
+                score: _qualityData.score,
+                inspector: msg.sender,
+                timestamp: uint64(block.timestamp),
+                testResults: _qualityData.testResults,
+                parameters: _qualityData.parameters,
+                parameterScores: _qualityData.parameterScores
+            });
+
+            products[_productId].qualityHistory.push(qualityRecord);
+
+            try stakeholderManager._addProductToInspector(msg.sender, _productId) {} catch {}
+
+            emit QualityRecorded(_productId, _qualityData.grade, _qualityData.score, msg.sender, block.timestamp);
+    }
+    //======================Optimized Product Transfer==================
+
+    function transferProduct(
+        DataStructures.TransferData memory _transferData
+    ) external 
+        productExists(_transferData.productId)
+        onlyProductOwner(_transferData.productId)
+        productNotBlocked(_transferData.productId)
+        userNotBlocked
+        canParticipateInTransactions
+        nonReentrant {
+
+            if (_transferData.to == address(0) || _transferData.to == msg.sender) revert InvalidInputData();
+            if (_transferData.price == 0) revert InvalidInputData();
+            if (!stakeholderManager.canParticipateInTransactions(_transferData.to)) {
+            revert InsufficientReputation();
+            }
+
+            // Check transaction hash uniqueness
+            if (bytes(_transferData.transactionHash).length > 0) {
+                bytes32 txHash = keccak256(bytes(_transferData.transactionHash));
+                if (usedTransactionHashes[txHash]) revert InvalidInputData();
+                usedTransactionHashes[txHash] = true;
+            }
+
+            _validateStageRecipient(_transferData.to , _transferData.newStage);
+
+            DataStructures.Product storage product = products[_transferData.productId];
+            address previousOwner = product.currentOwner;
+
+            product.currentOwner = _transferData.to;
+            product.stage = _transferData.newStage;
+            product.lastUpdated = uint64(block.timestamp);
+
+            _updatePricingForStage(product, _transferData.newStage, _transferData.price);
+
+            _removeFromArray(productsByOwner[previousOwner], _transferData.productId);
+
+            DataStructures.Transaction memory transaction = DataStructures.Transaction({
+                productID: _transferData.productId,
+                from: previousOwner,
+                to: _transferData.to,
+                price: uint256(_transferData.price),
+                quantity: product.quantity,
+                stage: _transferData.newStage,
+                timestamp: uint64(block.timestamp),
+                estimatedDelivery: uint64(_transferData.estimatedDelivery),
+                transactionHash: _transferData.transactionHash,
+                notes: _transferData.notes,
+                locationIPFS: _transferData.locationIPFS
+            });
+
+            productTransactions[_transferData.productId].push(transaction);
+
+            _updateStakeholderProductLists(_transferData.to, _transferData.productId);
+
+            emit ProductTransferred(_transferData.productId, previousOwner, _transferData.to, _transferData.price, product.quantity, _transferData.newStage);   
+        }
    //=======================Internal Functions=======================
    function _validateStageTransition(address _owner, DataStructures.ProductStage _newStage) internal view {
 
@@ -309,4 +402,50 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
        }
        return string(buffer);
    }
+
+   function _validateStageRecipient(address _recipient , DataStructures.ProductStage _stage) internal view {
+
+        string memory stakeholderType = stakeholderManager.getStakeholderType(_recipient);
+        bytes32 typeHash = keccak256(bytes(stakeholderType));
+
+        if(_stage >= DataStructures.ProductStage.ShippedToDistributor && _stage <= DataStructures.ProductStage.ShippedToRetailer) {
+            if (typeHash != keccak256("distributor")) revert UnauthorizedStageTransition();
+        } else if (_stage >= DataStructures.ProductStage.ReceivedByRetailer) {
+            if (typeHash != keccak256("retailer")) revert UnauthorizedStageTransition();
+        }
+   }
+
+    function _updatePricingForStage(DataStructures.Product storage _product, DataStructures.ProductStage _stage, uint256 _price) internal {
+        
+        if (_stage >= DataStructures.ProductStage.ReceivedByDistributor && _stage <= DataStructures.ProductStage.ShippedToRetailer) {
+            _product.price.distributorPrice = uint128(_price);
+        } else if (_stage >= DataStructures.ProductStage.ReceivedByRetailer) {
+            _product.price.distributorPrice = uint128(_price);
+        }
+        _product.price.lastUpdated = uint64(block.timestamp);
+   }
+
+   function _removeFromArray(uint256[] storage _array, uint256 _value) internal {
+        uint256 length = _array.length;
+        for(uint256 i = 0; i < length; i++) {
+            if(_array[i] == _value) {
+                _array[i] = _array[length - 1];
+                _array.pop();
+                break;
+            }
+        }
+   }
+
+   function _updateStakeholderProductLists(address _recipient, uint256 _productId) internal {
+        string memory stakeholderType = stakeholderManager.getStakeholderType(_recipient);
+        bytes32 typeHash = keccak256(bytes(stakeholderType));
+        
+        if (typeHash == keccak256("distributor")) {
+            try stakeholderManager._addProductToDistributor(_recipient, _productId) {} catch {}
+        } else if (typeHash == keccak256("retailer")) {
+            try stakeholderManager._addProductToRetailer(_recipient, _productId) {} catch {}
+        }
+    }
+
+   
 }
