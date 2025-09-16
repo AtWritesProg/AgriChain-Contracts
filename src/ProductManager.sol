@@ -341,7 +341,223 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
             _updateStakeholderProductLists(_transferData.to, _transferData.productId);
 
             emit ProductTransferred(_transferData.productId, previousOwner, _transferData.to, _transferData.price, product.quantity, _transferData.newStage);   
+    }
+    //======================Batch Operations=========================
+
+    function batchUpdateStage(
+        uint256[]  memory _productIds,
+        DataStructures.ProductStage[] memory _newStages,
+        string memory _notes
+    ) external userNotBlocked {
+        require(_productIds.length == _newStages.length, "Array length mismatch");
+        require(_productIds.length <= 20, "Too many products for batch operation");
+
+        for (uint256 i = 0; i < _product.length;) {
+            uint256 productId = _productIds[i];
+            if(product[productId].currentOwner == msg.sender && 
+            products[productId].isActive && 
+            !blockedProducts[productId]) {
+
+                DataStructures.Product storage product = products[productId];
+                DataStructures.ProductStage prevStage = product.currentStage;
+
+                if (uint8(_newstages[i]) > uint8(prevStage)) {
+                    product.currentStage = _newStages[i];
+                    product.lastUpdated = uint64(block.timestamp);
+
+                    emit ProductStageUpdated(productId, prevStage, _newStage[i], msg.sender, block.timestamp);
+                }
+            }
+
+            unchecked { ++i; }
         }
+    }
+
+    function batchRecordQuality(
+        DataStructures.BatchQualityData memory _batchData
+    ) external onlyRole(INSPECTOR_ROLE) {
+        require(_batchData.productIds.length == _batchData.grades.length, "Array Length mismatch");
+        require(_batchData.productIds.length <= 10, "Too many products for batch operations");
+
+        for (uint256 i = 0; i < _batchData.productIds.length;) {
+            uint256 productId = _batchData.productIds[i];
+
+            if (products[productId].isActive && !blockedProducts[productId]) {
+                DataStructures.Quality memory qualityRecord = DataStructures.Quality({
+                    grade: _batchData.grades[i],
+                    score: _batchData.scores[i],
+                    inspector: msg.sender,
+                    timestamp: uint64(block.timestamp),
+                    testResults: _batchData.testResults[i],
+                    parameters: new string[](0),
+                    parameterScores: new uint8[](0)
+                });
+
+                products[productId].qualityRecord.push(qualityRecord);
+
+                emit QualityRecorded(productId, _batchData.grades[i], _batchData.scores[i], msg.sender, block.timestamp);
+            }
+
+            unchecked { ++i; }
+        }
+    }
+
+    //====================== Query Functions =========================
+
+    function getProduct(uint256 _productId) external view productExists(_productId) returns (DataStructures.Product) {
+        return products[_productId];
+    }
+
+    function getProductTransactions(uint256 _productId) external view productExists(_productId) returns (DataStructures.Transaction[] memory) {
+        return productTransactions[_productId];
+    }
+
+    function getProductByCategory(string memory _category) external view returns (uint256[] memory) {
+        return productTransactions[_productId];
+    }
+
+    function getProductsByOwner(address _owner) external view returns (uint256[] memory) {
+        return productByOwner[_owner];
+    }
+
+    function getAllProductIds() external view returns (uint256[] memory) {
+        return allProductsIds;
+    }
+
+    function getAllCategories() external view returns (string[] memory) {
+        return allCategories;
+    }
+
+    //======================Statistics==========================
+
+    function getSystemStatistics() external view returns (
+        uint256 totalProducts,
+        uint256 activeProducts,
+        uint256 totalTransactions,
+        uint256 averageQualityScore,
+        uint256 totalCarbonFootprint
+    ) {
+        totalProducts = allProductIds.length;
+
+        assembly {
+            let activeCount := 0
+            let transactionCount := 0
+            let qualitySum := 0
+            let qualityCount := 0
+            let carbonSum := 0
+            
+            let productsPtr := sload(allProductIds.slot)
+            let productsLen := sload(productsPtr)
+
+            for { let i := 0 } lt(i, productsLen) { i := add(i, 1) } {
+                let productId := sload(add(add(productsPtr, 0x20), mul(i, 0x20)))
+                let productSlot := keccak256(productId, products.slot)
+                let isActive := sload(add(productSlot, 0x16))
+                
+                if isActive {
+                    activeCount := add(activeCount, 1)
+                    carbonSum := add(carbonSum, sload(add(productSlot, 0x17)))
+                }
+
+                activeProducts := activeCount
+                totalTransactions := transactionCount
+                totalCarbonFootprint := carbonSum
+        }
+
+        uint256 qualitySum = 0;
+        uint256 qualityCount = 0;
+
+        for (uint256 i = 0; i < allProductIds.length;) {
+            uint256 productId = allProductIds[i];
+            DataStructures.Product storage product = products[productId];
+
+            if (product.qualityRecords.length > 0) {
+                qualitySum += product.qualityHistory[product.qualityRecords.length - 1].score;
+                qualityCount++
+            }
+
+            unchecked { ++i; }
+        }
+
+        return (totalProducts, activeProducts, totalTransactions, averageQualityScore, totalCarbonFootprint);
+    }
+
+    function getSustainabilityMetrics() external view returns (
+        uint256 totalCarbonFootprint,
+        uint256 organicProductsCount,
+        uint256 sustainableFarmsCount,
+        uint256 averageCarbonPerProduct
+    ) {
+        uint256 productCount = allProductIds.length;
+        if (productCount == 0) return (0,0,0,0);
+
+        mapping(address => bool) storage countedFarms;
+
+        for (uint256 i = 0; i < productCount;) {
+            DataStructures.Product storage product = products[allProductIds[i]];
+
+            totalCarbonFootprint += product.carbonFootprint;
+
+            for (uint256 j = 0; j < product.certifications.length; j++) {
+                if (product.certifications[j] == DataStructures.CertificationType.Organic) {
+                    organicProductsCount++;
+                    break;
+                }
+            }
+            if (product.practices.isOrganic && !countedFarms[product.farmer]) {
+                sustainableFarmsCount++;
+                countedFarms[product.farmer] = true;
+            }
+
+            unchecked { ++i; }
+        }
+
+        averageCarbonPerProduct = totalCarbonFootprint / productCount;
+        
+        return (totalCarbonFootprint, organicProductsCount, sustainableFarmsCount, averageCarbonPerProduct);
+    }
+    //======================Admin Functions==========================
+
+    function blockProduct(uint256 _productId, string memory _reason) external onlyRole(ADMIN_ROLE) {
+        require(products[_productId].isActive, "Product not Active");
+        blockedProducts[_productId] = true;
+
+        emit EmergencyActionExecuted(
+            "Product blocked",
+            string(abi.encodePacked("Product ID: ", _productId)),
+            msg.sender,
+            block.timestamp
+        );
+    }
+
+    function blockUser(address _user, string memory _reason) external onlyRole(ADMIN_ROLE) {
+        blockedUser[_user] = true;
+
+        emit EmergencyActionExecuted(
+            "User blocked",
+            string(abi.encodePacked(_user)),
+            msg.sender,
+            block.timestamp
+        );
+    }
+
+    function updateSystemConfig(
+        uint32 _maxProductsPerFarmer,
+        uint32 _maxTransactionPerProduct,
+        uint8 _minQualityScore
+    ) external onlyRole(ADMIN_ROLE) {
+        systemConfig.maxProductPerFarmer = _maxProductsPerFarmer,
+        systemConfig.maxTransactionsPerProduct = _maxTransactionsPerProduct;
+        systemConfig.minQualityScore = _minQualityScore;
+    }
+
+    function pauseContract() external onlyRole(ADMIN_ROLE) {
+        _pause();
+    }
+
+    function unpauseContract() external onlyRole(ADMIN_ROLE) {
+        _unpause();
+    }
    //=======================Internal Functions=======================
    function _validateStageTransition(address _owner, DataStructures.ProductStage _newStage) internal view {
 
@@ -446,6 +662,4 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
             try stakeholderManager._addProductToRetailer(_recipient, _productId) {} catch {}
         }
     }
-
-   
 }
