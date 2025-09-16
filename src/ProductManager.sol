@@ -547,8 +547,8 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
         uint8 _minQualityScore
     ) external onlyRole(ADMIN_ROLE) {
         systemConfig.maxProductPerFarmer = _maxProductsPerFarmer,
-        systemConfig.maxTransactionsPerProduct = _maxTransactionsPerProduct;
-        systemConfig.minQualityScore = _minQualityScore;
+        systemConfig.maxTransactionsPerProduct = _maxTransactionsPerProduct,
+        systemConfig.minQualityScore = _minQualityScore
     }
 
     function pauseContract() external onlyRole(ADMIN_ROLE) {
