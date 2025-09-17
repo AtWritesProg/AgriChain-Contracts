@@ -319,7 +319,7 @@ library DataStructures {
     }
 
     struct BatchQualityData {
-        uint256[] productsID;
+        uint256[] productsId;
         QualityGrade[] grades;
         uint8[] scores; // Scores out of 100
         string[] testResults; //IPFS hash or Url

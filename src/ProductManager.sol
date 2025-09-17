@@ -9,7 +9,7 @@ import {DataStructures} from "./DataStructures.sol";
 import {IAgriChainEvents} from "./IAgriChainEvents.sol";
 import {StakeholderManager} from "./StakeholderManager.sol";
 
-contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGuard {
+contract ProductManager is Pausable, AccessControl, IAgriChainEvents, ReentrancyGuard {
     //Role Definitions
     bytes32 constant ADMIN_ROLE = 0x0000000000000000000000000000000000000000000000000000000000000000;
     bytes32 constant FARMER_ROLE = 0x9decc540ed7e12dc756a0a33fd30896853d6f3395609286d2d83d03db68fbac9;
@@ -23,6 +23,7 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
         uint32 minQualityScore;
         uint32 currentProduceId;
     }
+
     SystemConfig public systemConfig;
 
     //core storage
@@ -98,7 +99,7 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
     }
 
     modifier productNotBlocked(uint256 _productId) {
-        if(blockedProducts[_productId]) revert ProductBlocked();
+        if (blockedProducts[_productId]) revert ProductBlocked();
         _;
     }
 
@@ -109,21 +110,24 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
 
     //===================PRODUCT CREATION=======================
 
-    function createProduct(DataStructures.ProductCreationData memory _data
-    ) external whenNotPaused onlyRole(FARMER_ROLE)
-               onlyVerifiedStakeholder
-               userNotBlocked returns (uint256) {
-
+    function createProduct(DataStructures.ProductCreationData memory _data)
+        external
+        whenNotPaused
+        onlyRole(FARMER_ROLE)
+        onlyVerifiedStakeholder
+        userNotBlocked
+        returns (uint256)
+    {
         if (bytes(_data.name).length == 0 || bytes(_data.category).length == 0) {
             revert InvalidInputData();
         }
-        if(_data.quantity == 0 || _data.farmGatePrice == 0) {
+        if (_data.quantity == 0 || _data.farmGatePrice == 0) {
             revert InvalidInputData();
         }
         if (_data.plantedDate > block.timestamp || _data.expiryDate <= _data.harvestDate) {
             revert InvalidInputData();
         }
-        
+
         uint256 newProductId;
         unchecked {
             systemConfig.currentProduceId++;
@@ -135,7 +139,7 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
         DataStructures.Location memory farmLocation = farmer.farmLocation;
 
         //Create Product struct in Memory then copy to storage
-        DataStructures.Product memory newProduct = DataStructures.Product ({
+        DataStructures.Product memory newProduct = DataStructures.Product({
             id: newProductId,
             name: _data.name,
             variety: _data.variety,
@@ -203,27 +207,23 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
         emit ProductCreated(newProductId, msg.sender, _data.name, _data.category, _data.quantity);
 
         return newProductId;
+    }
 
-   }
+    //=======================Optimized Product Lifecycle==============
 
-   //=======================Optimized Product Lifecycle==============
+    function updateProductStage(
+        uint256 _productId,
+        DataStructures.ProductStage _newStage,
+        DataStructures.Location memory _newLocation,
+        string memory _notes
+    ) external productExists(_productId) onlyProductOwner(_productId) productNotBlocked(_productId) userNotBlocked {
+        DataStructures.Product storage product = products[_productId];
 
-    function updateProductStage(uint256 _productId, DataStructures.ProductStage _newStage,DataStructures.Location memory _newLocation,string memory _notes) external 
-        productExists(_productId)
-        onlyProductOwner(_productId)
-        productNotBlocked(_productId)
-        userNotBlocked {
-            DataStructures.Product storage product = products[_productId];
-
-            // Gas Optimization
-            assembly {
-            let currentStage := sload(add(product.slot, 0x15)) // currentStage offset
-            if iszero(gt(_newStage, currentStage)) {
-                mstore(0x00, 0x73746167655f657272)
-                revert(0x00, 0x20)
-            }   
+        // Gas Optimization
+        if (uint8(_newStage) <= uint8(product.stage)) {
+            revert InvalidInputData();
         }
-        _validateStageTransition(product.currentOwner, _newStage); 
+        _validateStageTransition(product.currentOwner, _newStage);
 
         DataStructures.ProductStage previousStage = product.stage;
 
@@ -231,7 +231,7 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
         product.currentLocation = _newLocation;
         product.lastUpdated = uint64(block.timestamp);
 
-        if(_newStage == DataStructures.ProductStage.Harvested && product.harvestDate == 0) {
+        if (_newStage == DataStructures.ProductStage.Harvested && product.harvestDate == 0) {
             product.harvestDate = uint64(block.timestamp);
         }
 
@@ -253,134 +253,145 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
         productTransactions[_productId].push(stageTransaction);
 
         emit ProductStageUpdated(_productId, previousStage, _newStage, msg.sender, block.timestamp);
-        emit ProductLocationUpdated(_productId, product.currentLocation.name, _newLocation.name, _newLocation.coordinates, msg.sender);
+        emit ProductLocationUpdated(
+            _productId, product.currentLocation.name, _newLocation.name, _newLocation.coordinates, msg.sender
+        );
     }
     //======================Optimized Quality Assessment======================
-    function recordQualityAssessment(uint256 _productId, DataStructures.QualityData memory _qualityData
-    ) external
+
+    function recordQualityAssessment(uint256 _productId, DataStructures.QualityData memory _qualityData)
+        external
         productExists(_productId)
         onlyRole(INSPECTOR_ROLE)
-        productNotBlocked(_productId) {
+        productNotBlocked(_productId)
+    {
+        if (_qualityData.score > 100) revert InvalidInputData();
+        if (_qualityData.parameters.length != _qualityData.parameterScores.length) revert InvalidInputData();
+        if (_qualityData.score < systemConfig.minQualityScore) revert QualityScoreTooLow();
+        if (!stakeholderManager.canPerformVerification(msg.sender)) revert StakeholderNotVerified();
 
-            if(_qualityData.score > 100) revert InvalidInputData();
-            if(_qualityData.parameters.length != _qualityData.parameterScores.length) revert InvalidInputData();
-            if(_qualityData.score < systemConfig.minQualityScore) revert QualityScoreTooLow();
-            if(!stakeholderManager.canPerformVerification(msg.sender)) revert StakeholderNotVerified();
+        //Create Quality Record
+        DataStructures.Quality memory qualityRecord = DataStructures.Quality({
+            grade: _qualityData.grade,
+            score: _qualityData.score,
+            inspector: msg.sender,
+            timestamp: uint64(block.timestamp),
+            testResults: _qualityData.testResults,
+            parameters: _qualityData.parameters,
+            parameterScores: _qualityData.parameterScores
+        });
 
-            //Create Quality Record
-            DataStructures.Quality memory qualityRecord = DataStructures.Quality ({
-                grade: _qualityData.grade,
-                score: _qualityData.score,
-                inspector: msg.sender,
-                timestamp: uint64(block.timestamp),
-                testResults: _qualityData.testResults,
-                parameters: _qualityData.parameters,
-                parameterScores: _qualityData.parameterScores
-            });
+        products[_productId].qualityHistory.push(qualityRecord);
 
-            products[_productId].qualityHistory.push(qualityRecord);
+        try stakeholderManager._addProductToInspector(msg.sender, _productId) {} catch {}
 
-            try stakeholderManager._addProductToInspector(msg.sender, _productId) {} catch {}
-
-            emit QualityRecorded(_productId, _qualityData.grade, _qualityData.score, msg.sender, block.timestamp);
+        emit QualityRecorded(_productId, _qualityData.grade, _qualityData.score, msg.sender, block.timestamp);
     }
     //======================Optimized Product Transfer==================
 
-    function transferProduct(
-        DataStructures.TransferData memory _transferData
-    ) external 
+    function transferProduct(DataStructures.TransferData memory _transferData)
+        external
         productExists(_transferData.productId)
         onlyProductOwner(_transferData.productId)
         productNotBlocked(_transferData.productId)
         userNotBlocked
         canParticipateInTransactions
-        nonReentrant {
-
-            if (_transferData.to == address(0) || _transferData.to == msg.sender) revert InvalidInputData();
-            if (_transferData.price == 0) revert InvalidInputData();
-            if (!stakeholderManager.canParticipateInTransactions(_transferData.to)) {
+        nonReentrant
+    {
+        if (_transferData.to == address(0) || _transferData.to == msg.sender) revert InvalidInputData();
+        if (_transferData.price == 0) revert InvalidInputData();
+        if (!stakeholderManager.canParticipateInTransactions(_transferData.to)) {
             revert InsufficientReputation();
-            }
+        }
 
-            // Check transaction hash uniqueness
-            if (bytes(_transferData.transactionHash).length > 0) {
-                bytes32 txHash = keccak256(bytes(_transferData.transactionHash));
-                if (usedTransactionHashes[txHash]) revert InvalidInputData();
-                usedTransactionHashes[txHash] = true;
-            }
+        // Check transaction hash uniqueness
+        if (bytes(_transferData.transactionHash).length > 0) {
+            bytes32 txHash = keccak256(bytes(_transferData.transactionHash));
+            if (usedTransactionHashes[txHash]) revert InvalidInputData();
+            usedTransactionHashes[txHash] = true;
+        }
 
-            _validateStageRecipient(_transferData.to , _transferData.newStage);
+        _validateStageRecipient(_transferData.to, _transferData.newStage);
 
-            DataStructures.Product storage product = products[_transferData.productId];
-            address previousOwner = product.currentOwner;
+        DataStructures.Product storage product = products[_transferData.productId];
+        address previousOwner = product.currentOwner;
 
-            product.currentOwner = _transferData.to;
-            product.stage = _transferData.newStage;
-            product.lastUpdated = uint64(block.timestamp);
+        product.currentOwner = _transferData.to;
+        product.stage = _transferData.newStage;
+        product.lastUpdated = uint64(block.timestamp);
 
-            _updatePricingForStage(product, _transferData.newStage, _transferData.price);
+        _updatePricingForStage(product, _transferData.newStage, _transferData.price);
 
-            _removeFromArray(productsByOwner[previousOwner], _transferData.productId);
+        _removeFromArray(productsByOwner[previousOwner], _transferData.productId);
+        productsByOwner[_transferData.to].push(_transferData.productId);
 
-            DataStructures.Transaction memory transaction = DataStructures.Transaction({
-                productID: _transferData.productId,
-                from: previousOwner,
-                to: _transferData.to,
-                price: uint256(_transferData.price),
-                quantity: product.quantity,
-                stage: _transferData.newStage,
-                timestamp: uint64(block.timestamp),
-                estimatedDelivery: uint64(_transferData.estimatedDelivery),
-                transactionHash: _transferData.transactionHash,
-                notes: _transferData.notes,
-                locationIPFS: _transferData.locationIPFS
-            });
+        // Create transaction record
+        DataStructures.Transaction memory transaction = DataStructures.Transaction({
+            productID: _transferData.productId,
+            from: previousOwner,
+            to: _transferData.to,
+            price: uint256(_transferData.price),
+            quantity: product.quantity,
+            stage: _transferData.newStage,
+            timestamp: uint64(block.timestamp),
+            estimatedDelivery: uint64(_transferData.estimatedDelivery),
+            transactionHash: _transferData.transactionHash,
+            notes: _transferData.notes,
+            locationIPFS: _transferData.locationIPFS
+        });
 
-            productTransactions[_transferData.productId].push(transaction);
+        productTransactions[_transferData.productId].push(transaction);
 
-            _updateStakeholderProductLists(_transferData.to, _transferData.productId);
+        _updateStakeholderProductLists(_transferData.to, _transferData.productId);
 
-            emit ProductTransferred(_transferData.productId, previousOwner, _transferData.to, _transferData.price, product.quantity, _transferData.newStage);   
+        emit ProductTransferred(
+            _transferData.productId,
+            previousOwner,
+            _transferData.to,
+            _transferData.price,
+            product.quantity,
+            _transferData.newStage
+        );
     }
     //======================Batch Operations=========================
 
     function batchUpdateStage(
-        uint256[]  memory _productIds,
-        DataStructures.ProductStage[] memory _newStages,
-        string memory _notes
+        uint256[] memory _productIds,
+        DataStructures.ProductStage[] memory _newStages
+        // string memory _notes
     ) external userNotBlocked {
         require(_productIds.length == _newStages.length, "Array length mismatch");
         require(_productIds.length <= 20, "Too many products for batch operation");
 
-        for (uint256 i = 0; i < _product.length;) {
+        for (uint256 i = 0; i < _productIds.length;) {
             uint256 productId = _productIds[i];
-            if(product[productId].currentOwner == msg.sender && 
-            products[productId].isActive && 
-            !blockedProducts[productId]) {
-
+            if (
+                products[productId].currentOwner == msg.sender && products[productId].isActive
+                    && !blockedProducts[productId]
+            ) {
                 DataStructures.Product storage product = products[productId];
-                DataStructures.ProductStage prevStage = product.currentStage;
+                DataStructures.ProductStage prevStage = product.stage;
 
-                if (uint8(_newstages[i]) > uint8(prevStage)) {
-                    product.currentStage = _newStages[i];
+                if (uint8(_newStages[i]) > uint8(prevStage)) {
+                    product.stage = _newStages[i];
                     product.lastUpdated = uint64(block.timestamp);
 
-                    emit ProductStageUpdated(productId, prevStage, _newStage[i], msg.sender, block.timestamp);
+                    emit ProductStageUpdated(productId, prevStage, _newStages[i], msg.sender, block.timestamp);
                 }
             }
 
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 
-    function batchRecordQuality(
-        DataStructures.BatchQualityData memory _batchData
-    ) external onlyRole(INSPECTOR_ROLE) {
-        require(_batchData.productIds.length == _batchData.grades.length, "Array Length mismatch");
-        require(_batchData.productIds.length <= 10, "Too many products for batch operations");
+    function batchRecordQuality(DataStructures.BatchQualityData memory _batchData) external onlyRole(INSPECTOR_ROLE) {
+        require(_batchData.productsId.length == _batchData.grades.length, "Array Length mismatch");
+        require(_batchData.productsId.length <= 10, "Too many products for batch operations");
 
-        for (uint256 i = 0; i < _batchData.productIds.length;) {
-            uint256 productId = _batchData.productIds[i];
+        for (uint256 i = 0; i < _batchData.productsId.length;) {
+            uint256 productId = _batchData.productsId[i];
 
             if (products[productId].isActive && !blockedProducts[productId]) {
                 DataStructures.Quality memory qualityRecord = DataStructures.Quality({
@@ -393,31 +404,38 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
                     parameterScores: new uint8[](0)
                 });
 
-                products[productId].qualityRecord.push(qualityRecord);
+                products[productId].qualityHistory.push(qualityRecord);
 
                 emit QualityRecorded(productId, _batchData.grades[i], _batchData.scores[i], msg.sender, block.timestamp);
             }
 
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
     }
 
     //====================== Query Functions =========================
 
-    function getProduct(uint256 _productId) external view productExists(_productId) returns (DataStructures.Product) {
+    function getProduct(uint256 _productId) external view productExists(_productId) returns (DataStructures.Product memory) {
         return products[_productId];
     }
 
-    function getProductTransactions(uint256 _productId) external view productExists(_productId) returns (DataStructures.Transaction[] memory) {
+    function getProductTransactions(uint256 _productId)
+        external
+        view
+        productExists(_productId)
+        returns (DataStructures.Transaction[] memory)
+    {
         return productTransactions[_productId];
     }
 
     function getProductByCategory(string memory _category) external view returns (uint256[] memory) {
-        return productTransactions[_productId];
+        return productByCategory[_category];
     }
 
     function getProductsByOwner(address _owner) external view returns (uint256[] memory) {
-        return productByOwner[_owner];
+        return productsByOwner[_owner];
     }
 
     function getAllProductIds() external view returns (uint256[] memory) {
@@ -430,125 +448,141 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
 
     //======================Statistics==========================
 
-    function getSystemStatistics() external view returns (
-        uint256 totalProducts,
-        uint256 activeProducts,
-        uint256 totalTransactions,
-        uint256 averageQualityScore,
-        uint256 totalCarbonFootprint
-    ) {
-        totalProducts = allProductIds.length;
+    function getSystemStatistics()
+        external
+        view
+        returns (
+            uint256 totalProducts,
+            uint256 activeProducts,
+            uint256 totalTransactions,
+            uint256 averageQualityScore,
+            uint256 totalCarbonFootprint
+        )
+    {
+        totalProducts = allProductsIds.length;
 
-        assembly {
-            let activeCount := 0
-            let transactionCount := 0
-            let qualitySum := 0
-            let qualityCount := 0
-            let carbonSum := 0
-            
-            let productsPtr := sload(allProductIds.slot)
-            let productsLen := sload(productsPtr)
+        uint256 activeCount = 0;
+        uint256 transactionCount = 0;
+        uint256 carbonSum = 0;
 
-            for { let i := 0 } lt(i, productsLen) { i := add(i, 1) } {
-                let productId := sload(add(add(productsPtr, 0x20), mul(i, 0x20)))
-                let productSlot := keccak256(productId, products.slot)
-                let isActive := sload(add(productSlot, 0x16))
-                
-                if isActive {
-                    activeCount := add(activeCount, 1)
-                    carbonSum := add(carbonSum, sload(add(productSlot, 0x17)))
-                }
+        for (uint256 i = 0; i < allProductsIds.length;) {
+            uint256 productId = allProductsIds[i];
+            DataStructures.Product storage product = products[productId];
 
-                activeProducts := activeCount
-                totalTransactions := transactionCount
-                totalCarbonFootprint := carbonSum
+            if (product.isActive) {
+                activeCount++;
+                carbonSum += product.carbonFootprint;
+                transactionCount += productTransactions[productId].length;
+            }
+
+            unchecked {
+                ++i;
+            }
         }
+        activeProducts = activeCount;
+        totalTransactions = transactionCount;
+        totalCarbonFootprint = carbonSum;
 
         uint256 qualitySum = 0;
         uint256 qualityCount = 0;
 
-        for (uint256 i = 0; i < allProductIds.length;) {
-            uint256 productId = allProductIds[i];
+        for (uint256 i = 0; i < allProductsIds.length;) {
+            uint256 productId = allProductsIds[i];
             DataStructures.Product storage product = products[productId];
 
-            if (product.qualityRecords.length > 0) {
-                qualitySum += product.qualityHistory[product.qualityRecords.length - 1].score;
-                qualityCount++
+            if (product.qualityHistory.length > 0) {
+                qualitySum += product.qualityHistory[product.qualityHistory.length - 1].score;
+                qualityCount++;
             }
 
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
+        averageQualityScore = qualityCount > 0 ? qualitySum / qualityCount : 0;
 
         return (totalProducts, activeProducts, totalTransactions, averageQualityScore, totalCarbonFootprint);
     }
 
-    function getSustainabilityMetrics() external view returns (
+    function getSustainabilityMetrics()
+    external
+    view
+    returns (
         uint256 totalCarbonFootprint,
         uint256 organicProductsCount,
         uint256 sustainableFarmsCount,
         uint256 averageCarbonPerProduct
-    ) {
-        uint256 productCount = allProductIds.length;
-        if (productCount == 0) return (0,0,0,0);
+    )
+    {
+        uint256 productCount = allProductsIds.length;
+        if (productCount == 0) return (0, 0, 0, 0);
 
-        mapping(address => bool) storage countedFarms;
+        // Create a temporary array to track counted farms in memory
+        address[] memory farmsList = new address[](productCount);
+        uint256 farmsCount = 0;
 
         for (uint256 i = 0; i < productCount;) {
-            DataStructures.Product storage product = products[allProductIds[i]];
+            DataStructures.Product storage product = products[allProductsIds[i]];
 
             totalCarbonFootprint += product.carbonFootprint;
 
-            for (uint256 j = 0; j < product.certifications.length; j++) {
-                if (product.certifications[j] == DataStructures.CertificationType.Organic) {
+            // Check for organic certification
+            for (uint256 j = 0; j < product.certificationType.length; j++) {
+                if (product.certificationType[j] == DataStructures.CertificationType.Organic) {
                     organicProductsCount++;
                     break;
                 }
             }
-            if (product.practices.isOrganic && !countedFarms[product.farmer]) {
-                sustainableFarmsCount++;
-                countedFarms[product.farmer] = true;
+
+            // Check if farm is sustainable and not already counted
+            if (product.practices.isOrganic) {
+                bool alreadyCounted = false;
+                for (uint256 k = 0; k < farmsCount; k++) {
+                    if (farmsList[k] == product.farmer) {
+                        alreadyCounted = true;
+                        break;
+                    }
+                }
+                if (!alreadyCounted) {
+                    farmsList[farmsCount] = product.farmer;
+                    farmsCount++;
+                    sustainableFarmsCount++;
+                }
             }
 
-            unchecked { ++i; }
+            unchecked {
+                ++i;
+            }
         }
 
         averageCarbonPerProduct = totalCarbonFootprint / productCount;
-        
+
         return (totalCarbonFootprint, organicProductsCount, sustainableFarmsCount, averageCarbonPerProduct);
     }
     //======================Admin Functions==========================
 
-    function blockProduct(uint256 _productId, string memory _reason) external onlyRole(ADMIN_ROLE) {
+    function blockProduct(uint256 _productId /**,string memory _reason*/) external onlyRole(ADMIN_ROLE) {
         require(products[_productId].isActive, "Product not Active");
         blockedProducts[_productId] = true;
 
         emit EmergencyActionExecuted(
-            "Product blocked",
-            string(abi.encodePacked("Product ID: ", _productId)),
-            msg.sender,
-            block.timestamp
+            "Product blocked", string(abi.encodePacked("Product ID: ", _productId)), msg.sender, block.timestamp
         );
     }
 
-    function blockUser(address _user, string memory _reason) external onlyRole(ADMIN_ROLE) {
-        blockedUser[_user] = true;
+    function blockUser(address _user /**string memory _reason*/) external onlyRole(ADMIN_ROLE) {
+        blockedUsers[_user] = true;
 
-        emit EmergencyActionExecuted(
-            "User blocked",
-            string(abi.encodePacked(_user)),
-            msg.sender,
-            block.timestamp
-        );
+        emit EmergencyActionExecuted("User blocked", string(abi.encodePacked(_user)), msg.sender, block.timestamp);
     }
 
-    function updateSystemConfig(
-        uint32 _maxProductsPerFarmer,
-        uint32 _maxTransactionPerProduct,
-        uint8 _minQualityScore
-    ) external onlyRole(ADMIN_ROLE) {
-        systemConfig.maxProductPerFarmer = _maxProductsPerFarmer,
-        systemConfig.maxTransactionsPerProduct = _maxTransactionsPerProduct,
-        systemConfig.minQualityScore = _minQualityScore
+    function updateSystemConfig(uint32 _maxProductsPerFarmer, uint32 _maxTransactionPerProduct, uint8 _minQualityScore)
+        external
+        onlyRole(ADMIN_ROLE)
+    {
+        systemConfig.maxProductPerFarmer = _maxProductsPerFarmer;
+        systemConfig.maxTransactionPerProduct = _maxTransactionPerProduct;
+        systemConfig.minQualityScore = _minQualityScore;
     }
 
     function pauseContract() external onlyRole(ADMIN_ROLE) {
@@ -558,17 +592,21 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
     function unpauseContract() external onlyRole(ADMIN_ROLE) {
         _unpause();
     }
-   //=======================Internal Functions=======================
-   function _validateStageTransition(address _owner, DataStructures.ProductStage _newStage) internal view {
+    //=======================Internal Functions=======================
 
+    function _validateStageTransition(address _owner, DataStructures.ProductStage _newStage) internal view {
         string memory stakeholderType = stakeholderManager.getStakeholderType(_owner);
         bytes32 typeHash = keccak256(bytes(stakeholderType));
 
         if (typeHash == keccak256("farmer")) {
-            revert UnauthorizedStageTransition();
+            if (_newStage > DataStructures.ProductStage.PackedAtFarm) {
+                revert UnauthorizedStageTransition();
+            }
         } else if (typeHash == keccak256("distributor")) {
-            if (_newStage < DataStructures.ProductStage.ShippedToDistributor ||
-            _newStage > DataStructures.ProductStage.ShippedToRetailer){
+            if (
+                _newStage < DataStructures.ProductStage.ShippedToDistributor
+                    || _newStage > DataStructures.ProductStage.ShippedToRetailer
+            ) {
                 revert UnauthorizedStageTransition();
             }
         } else if (typeHash == keccak256("retailer")) {
@@ -576,86 +614,95 @@ contract ProductManager is Pausable,AccessControl,IAgriChainEvents,ReentrancyGua
                 revert UnauthorizedStageTransition();
             }
         }
-   }
+    }
 
-   function _generateBatchNumber(address _farmer, uint256 _productId) internal view returns (string memory) {
-    return string(abi.encodePacked(
-        "BATCH-",
-        _addressToString(_farmer),
-        "-",
-        _uint256ToString(_productId),
-        "-",
-        _uint256ToString(block.timestamp)
-    ));
-   }
+    function _generateBatchNumber(address _farmer, uint256 _productId) internal view returns (string memory) {
+        return string(
+            abi.encodePacked(
+                "BATCH-",
+                _addressToString(_farmer),
+                "-",
+                _uint256ToString(_productId),
+                "-",
+                _uint256ToString(block.timestamp)
+            )
+        );
+    }
 
-   function _addressToString(address _addr) internal pure returns (string memory) {
-        
+    function _addressToString(address _addr) internal pure returns (string memory) {
         bytes32 value = bytes32(uint256(uint160(_addr)));
         bytes memory alphabet = "0123456789abcdef";
         bytes memory str = new bytes(8);
         for (uint256 i = 0; i < 4; i++) {
-            str[i*2] = alphabet[uint8(value[i + 12] >> 4)];
+            str[i * 2] = alphabet[uint8(value[i + 12] >> 4)];
             str[1 + i * 2] = alphabet[uint8(value[i + 12] & 0x0f)];
         }
-        return string(str); 
-   }
-   
-   function _uint256ToString(uint256 _value) internal pure returns(string memory) {
-       if(_value == 0) return "0";
+        return string(str);
+    }
 
-       uint256 temp = _value;
-       uint256 digits;
-       while (temp != 0) {
-        digits++;
-        temp /= 10;
-       }
+    function _uint256ToString(uint256 _value) internal pure returns (string memory) {
+        if (_value == 0) return "0";
 
-       bytes memory buffer =  new bytes(digits);
-       while (_value != 0) {
-        digits -= 1;
-        buffer[digits] = bytes1(uint8(48 + uint256(_value % 10)));
-       }
-       return string(buffer);
-   }
+        uint256 temp = _value;
+        uint256 digits;
+        while (temp != 0) {
+            digits++;
+            temp /= 10;
+        }
 
-   function _validateStageRecipient(address _recipient , DataStructures.ProductStage _stage) internal view {
+        bytes memory buffer = new bytes(digits);
+        while (_value != 0) {
+            digits -= 1;
+            buffer[digits] = bytes1(uint8(48 + uint256(_value % 10)));
+        }
+        return string(buffer);
+    }
 
+    function _validateStageRecipient(address _recipient, DataStructures.ProductStage _stage) internal view {
         string memory stakeholderType = stakeholderManager.getStakeholderType(_recipient);
         bytes32 typeHash = keccak256(bytes(stakeholderType));
 
-        if(_stage >= DataStructures.ProductStage.ShippedToDistributor && _stage <= DataStructures.ProductStage.ShippedToRetailer) {
+        if (
+            _stage >= DataStructures.ProductStage.ShippedToDistributor
+                && _stage <= DataStructures.ProductStage.ShippedToRetailer
+        ) {
             if (typeHash != keccak256("distributor")) revert UnauthorizedStageTransition();
         } else if (_stage >= DataStructures.ProductStage.ReceivedByRetailer) {
             if (typeHash != keccak256("retailer")) revert UnauthorizedStageTransition();
         }
-   }
+    }
 
-    function _updatePricingForStage(DataStructures.Product storage _product, DataStructures.ProductStage _stage, uint256 _price) internal {
-        
-        if (_stage >= DataStructures.ProductStage.ReceivedByDistributor && _stage <= DataStructures.ProductStage.ShippedToRetailer) {
+    function _updatePricingForStage(
+        DataStructures.Product storage _product,
+        DataStructures.ProductStage _stage,
+        uint256 _price
+    ) internal {
+        if (
+            _stage >= DataStructures.ProductStage.ReceivedByDistributor
+                && _stage <= DataStructures.ProductStage.ShippedToRetailer
+        ) {
             _product.price.distributorPrice = uint128(_price);
         } else if (_stage >= DataStructures.ProductStage.ReceivedByRetailer) {
-            _product.price.distributorPrice = uint128(_price);
+            _product.price.retailerPrice = uint128(_price);
         }
         _product.price.lastUpdated = uint64(block.timestamp);
-   }
+    }
 
-   function _removeFromArray(uint256[] storage _array, uint256 _value) internal {
+    function _removeFromArray(uint256[] storage _array, uint256 _value) internal {
         uint256 length = _array.length;
-        for(uint256 i = 0; i < length; i++) {
-            if(_array[i] == _value) {
+        for (uint256 i = 0; i < length; i++) {
+            if (_array[i] == _value) {
                 _array[i] = _array[length - 1];
                 _array.pop();
                 break;
             }
         }
-   }
+    }
 
-   function _updateStakeholderProductLists(address _recipient, uint256 _productId) internal {
+    function _updateStakeholderProductLists(address _recipient, uint256 _productId) internal {
         string memory stakeholderType = stakeholderManager.getStakeholderType(_recipient);
         bytes32 typeHash = keccak256(bytes(stakeholderType));
-        
+
         if (typeHash == keccak256("distributor")) {
             try stakeholderManager._addProductToDistributor(_recipient, _productId) {} catch {}
         } else if (typeHash == keccak256("retailer")) {

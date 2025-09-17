@@ -176,7 +176,7 @@ contract StakeholderManager is AccessControl, Pausable, IAgriChainEvents {
         payable
         whenNotPaused
         onlyUnregistered(msg.sender)
-        meetsRegistrationFee(systemConfig.farmerRegistrationFee)
+        meetsRegistrationFee(systemConfig.distributorRegistrationFee)
     {
         if (bytes(_data.name).length == 0 || bytes(_data.companyName).length == 0) {
             revert InvalidDataInput();
@@ -198,12 +198,14 @@ contract StakeholderManager is AccessControl, Pausable, IAgriChainEvents {
         uint256 warehouseLength = _data.warehouses.length;
         for (uint256 i = 0; i < warehouseLength;) {
             distributor.warehouses.push(_data.warehouses[i]);
+            unchecked { ++i; }
         }
 
         //Add Specializations
         uint256 specializationLength = _data.specializations.length;
         for (uint256 i = 0; i < specializationLength;) {
             distributor.specializations.push(_data.specializations[i]);
+            unchecked { ++i; }
         }
 
         allDistributors.push(msg.sender);
@@ -255,6 +257,7 @@ contract StakeholderManager is AccessControl, Pausable, IAgriChainEvents {
         uint256 storesLength = _data.additionalStores.length;
         for (uint256 i = 0; i < storesLength;) {
             retailer.additionalStores.push(_data.additionalStores[i]);
+            unchecked { ++i; }
         }
 
         allRetailers.push(msg.sender);
@@ -305,6 +308,7 @@ contract StakeholderManager is AccessControl, Pausable, IAgriChainEvents {
         uint256 authLength = _authorizedFor.length;
         for (uint256 i = 0; i < authLength;) {
             inspector.authorizedFor.push(_authorizedFor[i]);
+            unchecked { ++i; }
         }
 
         allInspectors.push(msg.sender);
@@ -486,13 +490,6 @@ contract StakeholderManager is AccessControl, Pausable, IAgriChainEvents {
     function getVerifiedStakeHolders() external view returns (uint256) {
         uint256 verified = 0;
 
-        assembly {
-            let farmersLen := sload(allFarmers.slot)
-            let distributorsLen := sload(allDistributors.slot)
-            let inspectorsLen := sload(allInspectors.slot)
-            let retailersLen := sload(allRetailers.slot)
-        }
-
         for (uint256 i = 0; i < allFarmers.length;) {
             if (stakeholderData[allFarmers[i]].isVerified) {
                 verified++;
@@ -562,7 +559,7 @@ contract StakeholderManager is AccessControl, Pausable, IAgriChainEvents {
         }
 
         for (uint256 i = 0; i < allInspectors.length;) {
-            totalReputation += stakeholderData[allFarmers[i]].reputationScore;
+            totalReputation += stakeholderData[allInspectors[i]].reputationScore;
             unchecked {
                 ++i;
             }
