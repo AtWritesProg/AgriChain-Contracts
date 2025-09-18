@@ -289,16 +289,17 @@ library DataStructures {
 
     //Supply Chain analytics struct for various analytics
     struct SupplyChainAnalytics {
-        uint64 totalProducts;
-        uint64 activeProducts;
-        uint64 totalFarmers;
-        uint64 totalDistributors;
-        uint64 totalRetailers;
-        uint64 totalInspectors;
-        uint64 totalTransactions;
-        uint64 averageSupplyTime; //in seconds
-        uint64 totalCarbonFootprint; //in grams CO2e
-        uint64 lastUpdated; //Timestamp of last update
+        uint256 totalProducts;
+        uint256 activeProducts;
+        uint256 totalFarmers;
+        uint256 totalDistributors;
+        uint256 totalRetailers;
+        uint256 totalInspectors;
+        uint256 totalTransactions;
+        uint256 averageSupplyTime; //in seconds
+        uint256 averageQualityScore; 
+        uint256 totalCarbonFootprint; //in grams CO2e
+        uint256 lastUpdated; //Timestamp of last update
     }
 
     //Sustainability Metrics struct for various sustainability metrics
