@@ -290,7 +290,7 @@ contract StakeholderManager is AccessControl, Pausable, IAgriChainEvents {
         onlyUnregistered(msg.sender)
         meetsRegistrationFee(systemConfig.inspectorRegistrationFee)
     {
-        if (bytes(_name).length == 0 || bytes(_organization).length == 0) {
+        if (bytes(_name).length == 0 || bytes(_organization).length == 0 || bytes(_licenseNumber).length == 0) {
             revert InvalidDataInput();
         }
 
@@ -628,5 +628,17 @@ contract StakeholderManager is AccessControl, Pausable, IAgriChainEvents {
 
     function getFarmer(address _farmer) external view returns (DataStructures.Farmer memory) {
         return farmers[_farmer];
+    }
+
+    function getDistributor(address _distributor) external view returns (DataStructures.Distributor memory) {
+    return distributors[_distributor];
+    }
+
+    function getRetailer(address _retailer) external view returns (DataStructures.Retailer memory) {
+        return retailers[_retailer];
+    }
+
+    function getInspector(address _inspector) external view returns (DataStructures.Inspector memory) {
+        return inspectors[_inspector];
     }
 }
